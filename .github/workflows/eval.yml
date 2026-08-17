@@ -1,0 +1,46 @@
+name: Eval CI
+
+# Runs on every push and pull request. The hard-gate tests (chunking,
+# retrieval recall, citation enforcement) need no secrets and will always
+# run. The real-generator quality tests (tests/test_eval_harness.py's
+# TIER 2) auto-skip unless OPENAI_API_KEY, COHERE_API_KEY, and
+# ANTHROPIC_API_KEY are all configured as repo secrets -- see that file's
+# module docstring for why generation-quality checks specifically require
+# a real LLM rather than an offline heuristic.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run test suite (unit tests + CI-gated eval)
+        env:
+          # Only present if configured as repo secrets; tests that need them
+          # skip gracefully via pytest.mark.skipif when they're absent.
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python -m pytest tests/ -v
+
+      - name: Run eval report (offline, informational -- not a gate)
+        # This step is deliberately non-blocking: the offline fake generator's
+        # refusal heuristic is documented (see FakeSmartGenerator) to be noisy
+        # on this small corpus, so it's printed for visibility in CI logs but
+        # doesn't fail the build. The actual CI gate is the pytest step above,
+        # via deterministic checks that don't depend on lexical-heuristic judgment.
+        run: python eval/run_eval.py --fake-all || true

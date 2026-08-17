@@ -1,0 +1,153 @@
+[
+  {
+    "id": "q01",
+    "question": "What is the daily meal reimbursement cap for domestic travel?",
+    "expected_chunk_ids": ["expense_policy_39c01def::chunk0000"],
+    "reference_answer": "$75 per day for domestic travel."
+  },
+  {
+    "id": "q02",
+    "question": "What is the daily meal reimbursement cap for international travel?",
+    "expected_chunk_ids": ["expense_policy_39c01def::chunk0000"],
+    "reference_answer": "$100 per day for international travel."
+  },
+  {
+    "id": "q03",
+    "question": "What is the per-night hotel reimbursement limit?",
+    "expected_chunk_ids": ["expense_policy_39c01def::chunk0000"],
+    "reference_answer": "$250 per night."
+  },
+  {
+    "id": "q04",
+    "question": "What types of expenses are eligible for reimbursement?",
+    "expected_chunk_ids": ["expense_policy_39c01def::chunk0000"],
+    "reference_answer": "Travel, meals during business trips, client entertainment, and approved software subscriptions required for the role."
+  },
+  {
+    "id": "q05",
+    "question": "When did the expense reimbursement policy take effect?",
+    "expected_chunk_ids": ["expense_policy_39c01def::chunk0000"],
+    "reference_answer": "January 1, 2026."
+  },
+  {
+    "id": "q06",
+    "question": "How many days do I have to submit an expense claim after incurring it?",
+    "expected_chunk_ids": ["expense_policy_39c01def::chunk0001"],
+    "reference_answer": "30 days; claims submitted after that require manager approval."
+  },
+  {
+    "id": "q07",
+    "question": "What approval is required for expenses over $500?",
+    "expected_chunk_ids": ["expense_policy_39c01def::chunk0001"],
+    "reference_answer": "Both manager and finance director approval."
+  },
+  {
+    "id": "q08",
+    "question": "What approval is required for expenses under $500?",
+    "expected_chunk_ids": ["expense_policy_39c01def::chunk0001"],
+    "reference_answer": "Single manager approval."
+  },
+  {
+    "id": "q09",
+    "question": "Is alcohol reimbursable as a business expense?",
+    "expected_chunk_ids": ["expense_policy_39c01def::chunk0001"],
+    "reference_answer": "Only alcohol related to client entertainment; alcohol not related to client entertainment is not eligible."
+  },
+  {
+    "id": "q10",
+    "question": "Are traffic fines reimbursable?",
+    "expected_chunk_ids": ["expense_policy_39c01def::chunk0001"],
+    "reference_answer": "No, traffic fines are explicitly non-reimbursable."
+  },
+  {
+    "id": "q11",
+    "question": "Are first-class airfare upgrades reimbursable?",
+    "expected_chunk_ids": ["expense_policy_39c01def::chunk0001"],
+    "reference_answer": "No, first-class airfare upgrades are not eligible for reimbursement."
+  },
+  {
+    "id": "q12",
+    "question": "What is the eligibility requirement for working remotely?",
+    "expected_chunk_ids": ["remote_work_policy_ac13f692::chunk0000"],
+    "reference_answer": "Completed a 90-day probationary period and hold a role classified as remote-eligible by the department head."
+  },
+  {
+    "id": "q13",
+    "question": "What is the one-time home office stipend for remote employees?",
+    "expected_chunk_ids": ["remote_work_policy_ac13f692::chunk0000"],
+    "reference_answer": "$300 one-time."
+  },
+  {
+    "id": "q14",
+    "question": "What is the monthly internet reimbursement for remote employees?",
+    "expected_chunk_ids": ["remote_work_policy_ac13f692::chunk0000"],
+    "reference_answer": "$50 per month."
+  },
+  {
+    "id": "q15",
+    "question": "What are the core working hours for remote employees?",
+    "expected_chunk_ids": ["remote_work_policy_ac13f692::chunk0000"],
+    "reference_answer": "10am to 3pm in their local timezone."
+  },
+  {
+    "id": "q16",
+    "question": "What security measures are required for remote work devices?",
+    "expected_chunk_ids": ["remote_work_policy_ac13f692::chunk0000"],
+    "reference_answer": "Company-issued devices with full-disk encryption and the corporate VPN client installed; VPN must be active at all times on public Wi-Fi."
+  },
+  {
+    "id": "q17",
+    "question": "When did the remote work policy take effect?",
+    "expected_chunk_ids": ["remote_work_policy_ac13f692::chunk0000"],
+    "reference_answer": "March 1, 2026."
+  },
+  {
+    "id": "q18",
+    "question": "What equipment does the company provide to remote employees?",
+    "expected_chunk_ids": ["remote_work_policy_ac13f692::chunk0000"],
+    "reference_answer": "A laptop, a monitor, and a one-time $300 home office stipend."
+  },
+  {
+    "id": "q19",
+    "question": "What should a new hire do on their first day?",
+    "expected_chunk_ids": ["onboarding_guide_79fc2232::chunk0000"],
+    "reference_answer": "Meet their manager at 9am for IT setup, receive a laptop/badge/access to Slack/email/wiki, complete I-9 and tax forms, set up MFA on company email, and join the #new-hires Slack channel."
+  },
+  {
+    "id": "q20",
+    "question": "By when must compliance training be completed?",
+    "expected_chunk_ids": ["onboarding_guide_79fc2232::chunk0000"],
+    "reference_answer": "By the end of week 1."
+  },
+  {
+    "id": "q21",
+    "question": "What topics does the mandatory compliance training cover?",
+    "expected_chunk_ids": ["onboarding_guide_79fc2232::chunk0000"],
+    "reference_answer": "Data privacy, workplace conduct, and security awareness."
+  },
+  {
+    "id": "q22",
+    "question": "What is the role of an onboarding buddy?",
+    "expected_chunk_ids": ["onboarding_guide_79fc2232::chunk0000"],
+    "reference_answer": "A teammate paired with the new hire for their first two weeks to help navigate team processes and answer day-to-day questions."
+  },
+  {
+    "id": "q23",
+    "question": "How long do I have to complete benefits enrollment as a new hire?",
+    "expected_chunk_ids": ["onboarding_guide_79fc2232::chunk0000"],
+    "reference_answer": "Within 30 days of the start date."
+  },
+  {
+    "id": "q24",
+    "question": "What benefits can be elected during enrollment?",
+    "expected_chunk_ids": ["onboarding_guide_79fc2232::chunk0000"],
+    "reference_answer": "Health insurance, dental, vision, and 401k elections."
+  },
+  {
+    "id": "q25",
+    "question": "What is the vacation carryover policy for employees?",
+    "expected_chunk_ids": [],
+    "reference_answer": "NOT_FOUND",
+    "note": "Intentional negative example: no document covers this. The system should decline to answer rather than fabricate a citation -- this is a key case for Day 4/5's hallucination and citation-validity checks."
+  }
+]

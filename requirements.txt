@@ -1,0 +1,23 @@
+# --- Ingestion & parsing (Day 1) ---
+pdfplumber==0.11.4
+python-docx==1.1.2
+beautifulsoup4==4.12.3
+lxml==5.3.0
+
+# --- Retrieval (Day 2) ---
+rank-bm25==0.2.2
+qdrant-client==1.11.3
+openai==1.54.0
+
+# --- Reranking / Generation (Day 3-4) ---
+cohere==7.0.8
+anthropic==0.122.0
+
+# --- API / UI (Day 6) ---
+# fastapi==0.115.0
+# uvicorn==0.31.0
+# streamlit==1.39.0
+# pydantic==2.9.2
+
+# --- Eval (Day 5) ---
+pytest==8.3.3
