@@ -1,279 +1,225 @@
-# Ask My Docs — Enterprise Knowledge Assistant
+# Ask My Docs: Enterprise Knowledge Assistant
 
-Domain-specific document Q&A system with hybrid retrieval (BM25 + vector),
-cross-encoder reranking, enforced citations, and a CI-gated evaluation
-pipeline. Supports PDF, DOCX, and HTML.
+A document question-answering system for enterprise knowledge bases. It ingests PDF, Word, and HTML files, retrieves relevant passages with **hybrid search (BM25 + vector)**, reranks them with a **cross-encoder**, and generates answers in which **every claim carries a verified citation**. Claims that cannot be traced to a retrieved source are stripped before the answer reaches the user.
 
-## Status: Day 5 of 9 — Eval Harness + CI Gate ✅
+The project's central idea: *asking an LLM to cite its sources is not enough.* This system checks the citations after generation and removes anything unsupported.
 
-### What's built
-- **`src/ingestion/parsers.py`** — format-specific parsers for PDF (via
-  `pdfplumber`, with font-size heuristics to detect headings), DOCX (via
-  `python-docx`, using heading styles + table extraction), and HTML (via
-  `BeautifulSoup`, stripping nav/header/footer boilerplate). All three
-  normalize to a common `Section(text, heading, page)` shape.
-- **`src/ingestion/chunker.py`** — structure-aware, token-budgeted chunker.
-  Key correctness properties (see `tests/test_chunker.py`):
-  - A chunk **never spans two PDF pages** — page citations are always exact.
-  - A chunk's `section` label reflects **every** heading it actually covers
-    (e.g. `"1. Overview – 3. Reimbursement Limits"`), not just the first.
-  - **No content is ever silently dropped.** An early version of this
-    chunker discarded small trailing sections below a token threshold —
-    caught by manual testing, fixed, and now pinned by a regression test.
-  - Sections longer than the chunk budget are split with a sliding window
-    and configurable overlap, preserving heading/page metadata per piece.
-- **`src/storage.py`** — SQLite schema for `documents` and `chunks`, with
-  dedup by content hash so re-running ingestion is idempotent.
-- **`scripts/ingest.py`** — CLI: `python scripts/ingest.py --input data/raw --domain enterprise_kb`
-- **`tests/test_chunker.py`** — 6 tests covering the correctness properties above.
+---
 
-### Verified against real files
-Three test documents (generated fresh, not just described) are in `data/raw/`:
-an expense policy PDF (2 pages, 6 numbered sections), a remote work policy
-DOCX (4 sections + a table), and an onboarding guide HTML page (with nav/
-header/footer that must be stripped). All three ingest cleanly; metadata was
-manually inspected and confirmed correct (see commit history / dev notes).
+## Features
 
-### Day 2 additions: Hybrid Retrieval
-- **`src/retrieval/bm25_index.py`** — sparse lexical retrieval via `rank_bm25`,
-  persisted to disk with pickle.
-- **`src/retrieval/embeddings.py`** — `Embedder` interface with two implementations:
-  `OpenAIEmbedder` (real, requires `OPENAI_API_KEY`) and `DeterministicFakeEmbedder`
-  (hash-based, offline, zero network — used for dev/testing plumbing only; **not**
-  semantically meaningful, so don't judge retrieval *quality* through it).
-- **`src/retrieval/vector_store.py`** — Qdrant wrapper. Runs embedded/on-disk by
-  default (no server needed); pass `url=`/`api_key=` to point at Qdrant Cloud instead.
-- **`src/retrieval/fusion.py`** — Reciprocal Rank Fusion (k=60), the standard way to
-  combine two differently-scaled ranked lists without normalizing raw scores.
-- **`src/retrieval/hybrid_retriever.py`** — orchestrates build + query across both indexes.
-- **`scripts/build_index.py`**, **`scripts/query.py`** — CLI tools; both support
-  `--fake-embedder` for offline testing without an API key.
-- **`tests/test_retrieval.py`** — 9 tests covering BM25, the vector store (real
-  embedded Qdrant), RRF fusion, and the full hybrid pipeline end-to-end offline.
+- **Multi-format ingestion**: PDF (page-aware), DOCX (headings and tables), and HTML (boilerplate stripped).
+- **Structure-aware chunking**: chunks respect headings, never span PDF pages, and carry `doc_id`, `section`, and `page` metadata so every citation can point to an exact location.
+- **Hybrid retrieval**: BM25 for exact terms, IDs, and figures; dense embeddings for semantic matches; merged with Reciprocal Rank Fusion (RRF).
+- **Cross-encoder reranking**: fused candidates are rescored with Cohere Rerank for query-aware ordering.
+- **Citation enforcement**: a post-generation verifier drops invalid, missing, and unsupported citations (details below).
+- **CI-gated evaluation**: a golden question set and a GitHub Actions workflow fail the build if retrieval or citation enforcement regresses.
+- **Fully runnable offline**: deterministic fake components let you run and test the whole pipeline with no API keys.
 
-**Verified on real data:** ingested the 3 sample docs, built both indexes, and
-queried "what is the meal reimbursement limit for domestic travel" — BM25 alone
-correctly ranked the right chunk first with a clear score margin (4.25 vs 1.67).
-The fused result was noisier because it was tested with the fake embedder (by
-design, not semantically meaningful); this sharpens once `OPENAI_API_KEY` is set
-and `OpenAIEmbedder` provides a real semantic signal.
+---
 
-**Known limitation, documented not silently ignored:** `rank_bm25`'s IDF formula
-can hit exactly 0 for terms in tiny (~2-doc) corpora — not an issue at real
-document-collection scale, but worth knowing if you're debugging with a handful
-of test docs.
+## Architecture
 
-### Day 3 additions: Reranking + Golden Eval Set
-- **`src/retrieval/reranker.py`** — `Reranker` interface with two implementations:
-  `CohereReranker` (real, requires `COHERE_API_KEY`, uses `rerank-v3.5` via Cohere's
-  v2 client) and `LocalOverlapReranker` (offline, Jaccard token-overlap — not a real
-  cross-encoder, exists only to test reranking plumbing without a network call).
-- **`src/retrieval/hybrid_retriever.py`** — updated to take an optional `reranker`.
-  When set, fused candidates are rescored and the *reranker's* ordering wins over
-  fusion rank — verified in tests that this correctly promotes the right chunk to
-  #1 even when the fusion step was noisy.
-- **`eval/golden_set.json`** — **25 questions** across all 3 sample documents, each
-  with `expected_chunk_ids` and a `reference_answer`. Includes **one intentional
-  negative example** (q25, asking about something no document covers) — critical
-  for Day 4/5's hallucination and citation-validity checks, since a good system
-  should decline to answer rather than fabricate a citation.
-- **`eval/run_retrieval_eval.py`** — Recall@K eval script against the golden set.
-  Built now (Day 3) rather than deferred to Day 5, so the golden set is validated
-  against real retrieval behavior immediately. Day 5 wraps this in CI.
-- **`tests/test_reranker.py`** — 6 tests, including golden-set structural validation
-  (unique IDs, all fields present, at least one negative example).
+```mermaid
+flowchart LR
+    A[PDF / DOCX / HTML] --> B[Parsers]
+    B --> C[Structure-aware chunker]
+    C --> D[(SQLite: documents + chunks)]
+    D --> E[BM25 index]
+    D --> F[Qdrant vector index]
 
-**Verified end-to-end:** ingested → indexed → queried with reranking on, confirmed
-the reranker correctly reorders fused candidates (rerank_score descending, matching
-relevance — not just fusion rank). Ran the full golden set through retrieval:
-24/24 scored questions hit (100% Recall@3). Note this number is inflated by the
-tiny 4-chunk demo corpus (top_k=3 out of 4 total chunks retrieves almost anything);
-treat it as proof the eval *plumbing* is correct, not as a real quality signal —
-that becomes meaningful once Day 5 CI runs against a larger real document set.
+    Q[User question] --> G[BM25 search]
+    Q --> H[Vector search]
+    E --> G
+    F --> H
+    G --> I[RRF fusion]
+    H --> I
+    I --> J[Cross-encoder rerank]
+    J --> K[LLM generation<br/>numbered sources]
+    K --> L[Citation enforcer]
+    L --> M[Answer + verified sources]
+```
 
-### Day 4 additions: Citation-Constrained Generation + Enforcement
-This is the core feature the project is named for. Two layers, per the
-project's design decision to **strip unsupported claims rather than
-regenerate the whole answer** (faster, cheaper, and the user still gets
-whatever part of the answer was actually grounded):
+### How citation enforcement works
 
-- **`src/generation/prompt.py`** — presents retrieved chunks to the model as
-  numbered sources (`[1]`, `[2]`...) rather than raw chunk_ids; the
-  number→chunk mapping (`source_map`) is what enforcement verifies against.
-  Instructs the model to cite every claim and to emit an exact fallback
-  phrase when the sources don't answer the question.
-- **`src/generation/generator.py`** — `AnthropicGenerator` (real, requires
-  `ANTHROPIC_API_KEY`) plus two offline fakes: `FakeCitingGenerator` (happy
-  path) and `FakeHallucinatingGenerator`, which **deliberately** cites a
-  nonexistent source and states an uncited claim — built specifically to
-  prove enforcement catches both failure modes, not just to pad test count.
-- **`src/generation/citation_enforcer.py`** — the actual enforcement logic.
-  Splits the answer into sentences, and for each one:
-  1. Strips citations pointing to source numbers that don't exist (invalid).
-  2. Strips sentences with no citation at all.
-  3. Checks lexical overlap between the claim and its cited source's text;
-     strips if the "cited" source doesn't plausibly say what's claimed
-     (catches a real source number attached to a fabricated fact).
-  A sentence survives only if it has at least one citation that's both
-  *valid* and *supported*. If nothing survives, the answer falls back to
-  the "not enough information" phrase rather than returning an empty string.
-  **Documented limitation:** claim support uses lexical overlap, not a real
-  NLI/entailment model — catches fabricated facts attached to a real
-  citation, but won't catch subtler logical misreadings. Swappable for a
-  real NLI model or LLM-as-judge later without changing the interface.
-- **`src/generation/pipeline.py`** — `AskPipeline`: retrieve → generate →
-  enforce → attach human-readable source references for whatever survived.
-- **`scripts/ask.py`** — end-to-end CLI.
-- **`tests/test_citation_enforcement.py`** — 12 tests. Caught a real bug
-  during testing: the sentence splitter was separating a claim from its own
-  citation marker (`"...day."` / `"[1]"` as two fragments instead of one),
-  which would have caused every correctly-cited sentence to be wrongly
-  stripped. Fixed and pinned by `test_correctly_cited_sentence_is_kept`.
+Retrieved chunks are shown to the model as numbered sources (`[1]`, `[2]`, ...). After generation, `citation_enforcer.py` splits the answer into sentences and keeps a sentence only if it has at least one citation that is both:
 
-**Verified end-to-end against real ingested data** via `scripts/ask.py --fake-all`:
-- Happy path: all sources cited correctly, all survive enforcement.
-- `--hallucinate` path: a fabricated `$10,000 bonus` claim with an invalid
-  citation `[99]`, and an uncited "applies retroactively" claim, were both
-  **caught and stripped**, while the one legitimately-cited claim survived.
-  This is the core proof that citation enforcement actually works, not just
-  that the prompt asks nicely for citations.
+1. **Valid**: the cited source number was actually provided to the model.
+2. **Supported**: the sentence shares enough content with the cited chunk's text.
 
-### Day 5 additions: Eval Harness + CI Gate
-- **`eval/harness.py`** — shared eval logic (used by both the CLI and the CI
-  tests, so there's one implementation, not two that can drift apart). Runs
-  every golden-set question through the **full** pipeline (retrieve →
-  generate → enforce, not just retrieval) and computes: retrieval recall,
-  **correct refusal rate** (of unanswerable questions, how many did the
-  system correctly decline rather than fabricate an answer — arguably the
-  single most important number in the whole project), false refusal rate,
-  and average claims dropped per answer.
-- **`src/generation/generator.py`** — added `FakeSmartGenerator`, an offline
-  stand-in that checks retrieval relevance before answering (unlike
-  `FakeCitingGenerator`, which cites anything regardless of relevance and
-  therefore can't test refusal behavior at all).
-- **Real, documented finding from calibrating `FakeSmartGenerator`:** on
-  this project's small demo corpus, there is **no single lexical-relevance
-  threshold** that cleanly separates answerable from unanswerable questions
-  — the one negative example scores *between* several genuinely-answerable
-  questions. This isn't a bug to silently patch; it's evidence that
-  hardcoded-threshold refusal is inherently unreliable at small scale,
-  which is exactly why production systems rely on the LLM's own contextual
-  judgment (the system prompt) instead. Documented in the class docstring
-  rather than hidden.
-- **Two-tier CI strategy, `tests/test_eval_harness.py`:**
-  - **Tier 1 (hard gate, always runs, no API keys needed):** retrieval
-    recall must be 100% on the golden set; and — the core guarantee test —
-    every golden-set question is run through a generator that *deliberately
-    hallucinates on every call*, asserting the fabricated content never
-    survives into any final answer. A regression in either fails the build.
-  - **Tier 2 (soft, auto-skips without API keys):** real end-to-end quality
-    with the actual OpenAI + Cohere + Anthropic pipeline — correct refusal
-    on the unanswerable question, and ≥90% overall pass rate. Runs locally
-    with real keys, or in CI if configured as repo secrets; skips cleanly
-    otherwise rather than failing a build that can't reach the API.
-- **`.github/workflows/eval.yml`** — runs the full test suite (`pytest
-  tests/ -v`) on every push/PR to `main`. Tier 1 tests are the actual gate;
-  Tier 2 tests pick up repo secrets automatically if present. A separate
-  offline eval report step runs for log visibility but is explicitly
-  non-blocking, since it's built on the documented-noisy lexical heuristic.
+Everything else is stripped, and the answer is rebuilt from the surviving sentences. Partially wrong citation lists (for example `[1][99]`) are corrected to `[1]`. If nothing survives, the system returns an explicit "I don't have enough information in the provided sources" response rather than an empty or invented one.
 
-**Verified:** 36/38 tests pass, 2 skip cleanly without API keys (confirmed
-locally; will behave identically in CI without secrets configured).
+> **Limitation:** the "supported" check uses lexical overlap, not a true entailment (NLI) model. It catches fabricated facts attached to real citations, but not subtle logical misreadings. The check sits behind a single function so a real NLI model or LLM-as-judge can replace it.
 
-### Try it
+---
+
+## Tech stack
+
+| Layer | Technology |
+|---|---|
+| Parsing | `pdfplumber`, `python-docx`, `BeautifulSoup` + `lxml` |
+| Metadata store | SQLite |
+| Sparse retrieval | `rank_bm25` |
+| Vector store | Qdrant (embedded local mode, or hosted via URL + API key) |
+| Embeddings | OpenAI `text-embedding-3-small` |
+| Reranker | Cohere Rerank (`rerank-v3.5`) |
+| Generator | Anthropic Claude |
+| Testing / CI | `pytest`, GitHub Actions |
+| API / UI | FastAPI, Streamlit *(in progress)* |
+
+---
+
+## Quickstart
+
+### 1. Install
+
 ```bash
+git clone https://github.com/Srivatsa2004/Ask-My-Doc.git
+cd Ask-My-Doc
+python3 -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-python scripts/ingest.py --input data/raw --domain enterprise_kb
-python scripts/build_index.py --fake-embedder
+```
 
-# full test suite (Tier 2 auto-skips without real keys):
-python -m pytest tests/ -v
+### 2. Run offline (no API keys needed)
 
-# eval report:
-python eval/run_eval.py --fake-all
-python eval/run_eval.py --fake-all --hallucinate   # stress-test enforcement
+```bash
+python3 scripts/ingest.py --input data/raw --domain enterprise_kb
+python3 scripts/build_index.py --fake-embedder
+python3 scripts/ask.py "what is the meal reimbursement limit for domestic travel" --fake-all
+```
 
-# with real keys, Tier 2 tests run too:
-export OPENAI_API_KEY=sk-...
+> Offline mode uses deterministic stand-ins for the embedder, reranker, and generator. They exercise the full pipeline mechanically but are **not semantically meaningful**; answers will not be real. Use it to verify the plumbing, not answer quality.
+
+### 3. Run with real models
+
+```bash
+export OPENAI_API_KEY=sk-proj-...
 export COHERE_API_KEY=...
 export ANTHROPIC_API_KEY=sk-ant-...
-python scripts/build_index.py
-python -m pytest tests/ -v
-python eval/run_eval.py
+
+python3 scripts/build_index.py
+python3 scripts/ask.py "what is the meal reimbursement limit for domestic travel"
 ```
 
-## Roadmap
-| Day | Milestone | Status |
+Expected shape of the output:
+
+```
+Answer: Meal reimbursements are capped at $75 per day for domestic travel. [1]
+
+Sources:
+  - expense_policy_... | ... Reimbursement Limits, p.1 [expense_policy_...::chunk0000]
+```
+
+### 4. Add your own documents
+
+Drop PDF, DOCX, or HTML files into `data/raw/`, then re-run `ingest.py` and `build_index.py`. Re-ingesting is safe: documents are deduplicated by content hash.
+
+---
+
+## Testing and evaluation
+
+```bash
+python3 -m pytest tests/ -v
+```
+
+Currently **36 passed, 2 skipped**. The 2 skipped tests need live API keys (see below).
+
+### Test tiers
+
+| Tier | Needs API keys | Runs in CI | Checks |
+|---|---|---|---|
+| **1. Hard gate** | No | Always | Chunking correctness, retrieval recall on the golden set, and that fabricated claims never survive citation enforcement |
+| **2. Real-quality** | Yes (OpenAI + Cohere + Anthropic) | Only if repo secrets are set | Correct refusal on unanswerable questions; end-to-end pass rate on the golden set |
+
+Tier 2 skips cleanly when keys are absent instead of failing the build.
+
+### The adversarial enforcement test
+
+`tests/test_eval_harness.py` runs **every golden-set question** through a generator that deliberately hallucinates on every call (a fabricated figure with an invalid citation, plus an uncited claim) and asserts that neither ever appears in a final answer. This tests the enforcement guarantee directly rather than trusting the prompt.
+
+### Eval report
+
+```bash
+python3 eval/run_eval.py --fake-all        # offline
+python3 eval/run_eval.py                   # real pipeline (needs all three keys)
+python3 eval/run_eval.py --fake-all --hallucinate   # stress-test enforcement
+```
+
+Reports retrieval recall, correct-refusal rate (unanswerable questions correctly declined), false-refusal rate, and average claims dropped per answer.
+
+---
+
+## Results and honest status
+
+| Measurement | Result | How to read it |
 |---|---|---|
-| 1 | Ingestion + structure-aware chunking | ✅ Done |
-| 2 | Hybrid retrieval: BM25 + vector (Qdrant) + RRF fusion | ✅ Done |
-| 3 | Cross-encoder reranking (Cohere) + golden eval set (25 Qs) | ✅ Done |
-| 4 | Citation-constrained generation + enforcement layer | ✅ Done |
-| 5 | Eval harness (Recall@K, citation validity) + GitHub Actions CI gate | ✅ Done |
-| 6 | FastAPI backend + Streamlit UI | ⬜ Next |
-| 4 | Citation-constrained generation + enforcement layer | ⬜ |
-| 5 | Eval harness (Recall@K, citation validity) + GitHub Actions CI gate | ⬜ |
-| 6 | FastAPI backend + Streamlit UI | ⬜ |
-| 7 | Polish, deploy (Streamlit Cloud / Render) | ⬜ |
-| 8 | Hardening buffer | ⬜ |
-| 9 | README, architecture diagram, demo GIF | ⬜ |
+| Hallucinated claims surviving enforcement | **0 across all 25 golden questions** | Verified against a deliberately hallucinating generator. Measures the guardrail, not overall answer quality. |
+| Retrieval recall on golden set | **100% (24/24 answerable questions)** | Measured offline on a **4-chunk demo corpus**, where retrieving the right chunk in the top 5 is easy. Shows the pipeline works, not retrieval quality at scale. |
 
-## Architecture (target, end state)
-```
-Docs (PDF/DOCX/HTML)
-   → Ingestion & Parsing        [Day 1 ✅]
-   → Structure-aware Chunking   [Day 1 ✅]
-   → Embedding + BM25 indexing  [Day 2 ✅]
-   → Hybrid Retrieval (RRF fusion)   [Day 2 ✅]
-   → Cross-Encoder Reranking    [Day 3 ✅]
-   → Context Assembly with source IDs
-   → LLM Generation (citation-constrained)  [Day 4 ✅]
-   → Citation Verification / Enforcement    [Day 4 ✅]
-   → Response + citations → Streamlit UI    [Day 6]
-```
-Every change to retrieval, chunking, or prompts is checked against a fixed
-golden question set in CI (Day 5) — regressions in retrieval recall or
-citation validity fail the build.
 
-## Project layout
+
+---
+
+## Design decisions and known limitations
+
+- **Strip, don't regenerate.** Unsupported claims are removed rather than triggering a second LLM call. This is cheaper and faster, and the user still receives whatever part of the answer was grounded.
+- **Lexical support check.** Claim verification uses word overlap, not an NLI model (see the note above).
+- **Refusal is the LLM's job.** On the small demo corpus, no single retrieval-score threshold cleanly separated answerable from unanswerable questions: the one negative example scored in the middle of the positive examples' range. The offline `FakeSmartGenerator` is therefore a documented-imperfect heuristic, and real refusal quality is measured only with the Claude generator.
+- **Approximate token counting.** Chunk sizing uses a regex tokenizer instead of a model-specific BPE tokenizer, to avoid a network dependency at ingestion time. It runs slightly high versus true token counts, which keeps chunks safely under context limits.
+- **Small demo corpus.** The bundled sample data (3 documents, 4 chunks, 25 golden questions) validates the pipeline. It is not a benchmark.
+- **`rank_bm25` quirk.** Its IDF formula yields exactly zero for a term present in half of a 2-document corpus. This only affects toy-sized test corpora.
+
+---
+
+## Project structure
+
 ```
 ask-my-docs/
 ├── src/
 │   ├── ingestion/
-│   │   ├── parsers.py      # PDF / DOCX / HTML → Section objects
-│   │   └── chunker.py      # Section objects → Chunk objects
+│   │   ├── parsers.py            # PDF / DOCX / HTML -> sections
+│   │   └── chunker.py            # sections -> page-exact, heading-aware chunks
 │   ├── retrieval/
-│   │   ├── embeddings.py       # OpenAIEmbedder / DeterministicFakeEmbedder
-│   │   ├── bm25_index.py       # sparse lexical retrieval
-│   │   ├── vector_store.py     # Qdrant wrapper (embedded or hosted)
-│   │   ├── fusion.py           # Reciprocal Rank Fusion
-│   │   ├── reranker.py         # CohereReranker / LocalOverlapReranker
-│   │   └── hybrid_retriever.py # orchestrates build + query + rerank
+│   │   ├── embeddings.py         # OpenAIEmbedder / offline fake
+│   │   ├── bm25_index.py         # sparse retrieval
+│   │   ├── vector_store.py       # Qdrant wrapper (local or hosted)
+│   │   ├── fusion.py             # Reciprocal Rank Fusion
+│   │   ├── reranker.py           # CohereReranker / offline fake
+│   │   └── hybrid_retriever.py   # orchestrates search + fusion + rerank
 │   ├── generation/
-│   │   ├── prompt.py            # numbered-source prompt construction
-│   │   ├── generator.py         # AnthropicGenerator / FakeCitingGenerator / FakeHallucinatingGenerator
-│   │   ├── citation_enforcer.py # verify + strip unsupported claims
-│   │   └── pipeline.py          # AskPipeline: retrieve -> generate -> enforce
-│   └── storage.py          # SQLite: documents, chunks
-├── scripts/
-│   ├── ingest.py            # parse + chunk + store documents
-│   ├── build_index.py       # build BM25 + vector indexes
-│   ├── query.py             # ad-hoc hybrid retrieval + rerank query tool
-│   └── ask.py                # end-to-end: retrieve, generate, enforce citations
-├── eval/
-│   ├── golden_set.json      # 25 Q&A pairs with expected citations
-│   ├── harness.py            # shared eval logic (CLI + CI tests)
-│   └── run_eval.py           # full-pipeline eval CLI report
-├── .github/workflows/
-│   └── eval.yml              # CI: runs pytest on every push/PR
-├── tests/
-│   ├── test_chunker.py
-│   ├── test_retrieval.py
-│   ├── test_reranker.py
-│   ├── test_citation_enforcement.py
-│   └── test_eval_harness.py
-├── data/
-│   ├── raw/                # source documents
-│   └── processed/          # SQLite DB
-└── requirements.txt
+│   │   ├── prompt.py             # numbered-source prompt
+│   │   ├── generator.py          # AnthropicGenerator + offline fakes
+│   │   ├── citation_enforcer.py  # verify and strip unsupported claims
+│   │   └── pipeline.py           # AskPipeline: retrieve -> generate -> enforce
+│   ├── pipeline_factory.py       # builds the pipeline from env vars
+│   └── storage.py                # SQLite documents + chunks
+├── scripts/                      # ingest.py, build_index.py, query.py, ask.py
+├── eval/                         # golden_set.json, harness.py, run_eval.py
+├── tests/                        # unit tests + CI-gated eval tests
+├── data/raw/                     # sample PDF, DOCX, HTML documents
+└── .github/workflows/eval.yml    # CI
 ```
+
+---
+
+## Roadmap
+
+- [x] Ingestion and structure-aware chunking
+- [x] Hybrid retrieval (BM25 + vector + RRF)
+- [x] Cross-encoder reranking and golden evaluation set
+- [x] Citation-constrained generation and enforcement
+- [x] Eval harness and GitHub Actions CI gate
+- [ ] FastAPI backend and Streamlit UI *(in progress)
+
+---
+
+## Configuration reference
+
+| Variable | Used for |
+|---|---|
+| `OPENAI_API_KEY` | Embeddings (`text-embedding-3-small`) |
+| `COHERE_API_KEY` | Reranking |
+| `ANTHROPIC_API_KEY` | Answer generation |
+
+If any of the three is missing, `src/pipeline_factory.py` falls back to the offline components and prints a warning.
